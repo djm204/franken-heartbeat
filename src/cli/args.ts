@@ -1,12 +1,14 @@
 export interface CliArgs {
-  configPath?: string;
-  heartbeatFilePath?: string;
+  configPath: string | undefined;
+  heartbeatFilePath: string | undefined;
   dryRun: boolean;
   projectId: string;
 }
 
 export function parseArgs(argv: string[]): CliArgs {
   const args: CliArgs = {
+    configPath: undefined,
+    heartbeatFilePath: undefined,
     dryRun: false,
     projectId: 'default',
   };
