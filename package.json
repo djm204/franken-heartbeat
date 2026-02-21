@@ -11,6 +11,9 @@
       "types": "./dist/index.d.ts"
     }
   },
+  "bin": {
+    "franken-heartbeat": "./dist/cli/run.js"
+  },
   "files": [
     "dist"
   ],
