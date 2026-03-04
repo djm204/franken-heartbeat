@@ -2,8 +2,10 @@
 
 import { readFile, writeFile } from 'node:fs/promises';
 import { parseArgs } from './args.js';
+import type { CliArgs } from './args.js';
 import { HeartbeatConfigSchema } from '../core/config.js';
 import { PulseOrchestrator } from '../orchestrator/pulse-orchestrator.js';
+import type { PulseOrchestratorDeps } from '../orchestrator/pulse-orchestrator.js';
 import type { ILlmClient } from '../reflection/types.js';
 import type { IMemoryModule } from '../modules/memory.js';
 import type { IObservabilityModule } from '../modules/observability.js';
@@ -15,39 +17,39 @@ import { exec } from 'node:child_process';
 
 // Stub implementations for standalone mode
 // In production, these would be wired to real module implementations
-const stubMemory: IMemoryModule = {
+export const stubMemory: IMemoryModule = {
   getRecentTraces: async () => [],
   getSuccesses: async () => [],
   getFailures: async () => [],
   recordLesson: async () => {},
 };
 
-const stubObservability: IObservabilityModule = {
+export const stubObservability: IObservabilityModule = {
   getTraces: async () => [],
   getTokenSpend: async () => ({ totalTokens: 0, totalCostUsd: 0, breakdown: [] }),
 };
 
-const stubPlanner: IPlannerModule = {
+export const stubPlanner: IPlannerModule = {
   injectTask: async () => {},
 };
 
-const stubCritique: ICritiqueModule = {
+export const stubCritique: ICritiqueModule = {
   auditConclusions: async () => ({ passed: true, reason: 'stub', flaggedItems: [] }),
 };
 
-const stubHitl: IHitlGateway = {
+export const stubHitl: IHitlGateway = {
   sendMorningBrief: async () => {},
   notifyAlert: async () => {},
 };
 
-const stubLlm: ILlmClient = {
+export const stubLlm: ILlmClient = {
   complete: async () => ({
     ok: true as const,
     value: JSON.stringify({ patterns: [], improvements: [], techDebt: [] }),
   }),
 };
 
-async function getGitStatus(): Promise<GitStatusResult> {
+export async function getGitStatus(): Promise<GitStatusResult> {
   return new Promise((resolve) => {
     exec('git status --porcelain', (err, stdout) => {
       if (err) {
@@ -60,9 +62,7 @@ async function getGitStatus(): Promise<GitStatusResult> {
   });
 }
 
-async function main(): Promise<void> {
-  const cliArgs = parseArgs(process.argv.slice(2));
-
+export function buildOrchestratorDeps(cliArgs: CliArgs): PulseOrchestratorDeps {
   const configOverrides: Record<string, unknown> = {};
   if (cliArgs.heartbeatFilePath) {
     configOverrides['heartbeatFilePath'] = cliArgs.heartbeatFilePath;
@@ -70,7 +70,7 @@ async function main(): Promise<void> {
 
   const config = HeartbeatConfigSchema.parse(configOverrides);
 
-  const orchestrator = new PulseOrchestrator({
+  return {
     memory: stubMemory,
     observability: stubObservability,
     planner: cliArgs.dryRun ? { injectTask: async () => {} } : stubPlanner,
@@ -91,23 +91,35 @@ async function main(): Promise<void> {
       ? async () => {}
       : async (path, content) => { await writeFile(path, content, 'utf-8'); },
     projectId: cliArgs.projectId,
-  });
-
-  const report = await orchestrator.run();
-
-  // Output report as JSON
-  process.stdout.write(JSON.stringify(report, null, 2) + '\n');
+  };
 }
 
-// Graceful shutdown
-const shutdown = (signal: string) => {
-  process.stderr.write(`Received ${signal}, shutting down...\n`);
-  process.exit(0);
-};
-process.on('SIGTERM', () => shutdown('SIGTERM'));
-process.on('SIGINT', () => shutdown('SIGINT'));
+export async function main(argv: string[]): Promise<string> {
+  const cliArgs = parseArgs(argv);
+  const deps = buildOrchestratorDeps(cliArgs);
+  const orchestrator = new PulseOrchestrator(deps);
+  const report = await orchestrator.run();
+  return JSON.stringify(report, null, 2);
+}
 
-main().catch((err: unknown) => {
-  process.stderr.write(`Fatal error: ${err instanceof Error ? err.message : String(err)}\n`);
-  process.exit(1);
-});
+// Only run when executed directly (not imported for testing)
+const isDirectRun = process.argv[1]?.endsWith('run.js') ?? false;
+
+if (isDirectRun) {
+  // Graceful shutdown
+  const shutdown = (signal: string) => {
+    process.stderr.write(`Received ${signal}, shutting down...\n`);
+    process.exit(0);
+  };
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
+
+  main(process.argv.slice(2))
+    .then((output) => {
+      process.stdout.write(output + '\n');
+    })
+    .catch((err: unknown) => {
+      process.stderr.write(`Fatal error: ${err instanceof Error ? err.message : String(err)}\n`);
+      process.exit(1);
+    });
+}
